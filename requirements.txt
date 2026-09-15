@@ -1,0 +1,42 @@
+# Core
+torch>=2.6            # native scaled_dot_product_attention (flash-attention), bf16 autocast, torch.compile
+torchvision>=0.21
+accelerate>=0.34
+einops
+ema-pytorch
+fsspec
+
+# Data
+datasets>=2.20         # Hugging Face Hub dataset streaming/loading (see tryondiffusion/hf_dataset.py)
+# NOTE: huggingface_hub>=1.0's httpx-based HTTP backend has a known client-lifecycle
+# bug that breaks fsspec range-reads used by `datasets` streaming (observed directly
+# while building this repo: "RuntimeError: Cannot send a request, as the client has
+# been closed."). Pin below 1.0 until that's resolved upstream.
+huggingface_hub<1.0
+pandas
+pillow
+numpy
+
+# Auto-derivation of pose + clothing-agnostic image (tryondiffusion/preprocessing.py)
+mediapipe>=0.10.14      # PoseLandmarker (Tasks API) for on-the-fly pose estimation
+transformers>=4.44      # optional: higher-quality agnostic-image segmentation path
+
+# Training / logging
+tqdm
+tensorboard
+wandb
+ftfy
+sentencepiece
+scipy
+ninja
+h5py
+chardet
+
+# Demo UI
+gradio>=4.0
+
+# --- Optional, GPU-throughput extras (uncomment if desired) ---
+# bitsandbytes          # 8-bit optimizers, Linux/CUDA only
+# xformers               # not required: attention already uses torch's native
+#                        # scaled_dot_product_attention, which picks flash-attention
+#                        # kernels automatically on Hopper/Blackwell (incl. B200)
