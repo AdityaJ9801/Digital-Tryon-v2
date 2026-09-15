@@ -7,19 +7,29 @@ Requires a trained checkpoint at CHECKPOINT_PATH (see README.md ->
 from the user — the clothing-agnostic image and pose keypoints are derived
 automatically by TryOnPipeline (tryon_pipeline.py).
 
+TRYON_CHECKPOINT defaults to the ./checkpoints_base directory and always
+auto-picks the highest-step checkpoint.<N>.pt inside it - point it at a
+specific .pt file instead if you want a particular checkpoint rather than
+the newest one.
+
 The resolution env vars below MUST match whatever --base-image-size /
 --sr-image-size the checkpoint was actually trained with, or the checkpoint
 will silently partial-load (mismatched-shape layers get skipped) and
 generation will look broken. Example, for a checkpoint trained with
 `trainer.py --base-image-size 128 128`:
-    TRYON_CHECKPOINT=./checkpoints_base/checkpoint.6200.pt \
-    TRYON_BASE_SIZE=128,128 python app.py
+    TRYON_CHECKPOINT=./checkpoints_base TRYON_BASE_SIZE=128,128 python app.py
 
 On a remote server (SSH, no local browser), set TRYON_SHARE=1 to get a
 public gradio.live URL you can open from any browser, instead of needing
 SSH port-forwarding:
-    TRYON_CHECKPOINT=./checkpoints_base/checkpoint.6200.pt \
-    TRYON_BASE_SIZE=128,128 TRYON_SHARE=1 python app.py
+    TRYON_CHECKPOINT=./checkpoints_base TRYON_BASE_SIZE=128,128 \
+    TRYON_SHARE=1 python app.py
+
+TRYON_INFERENCE_STEPS (default 50) controls generation speed vs detail -
+this model uses continuous-time diffusion, so sampling step count is
+independent of training and safe to lower for faster generation (see
+TryOnConfig.inference_timesteps for why). Try 20-30 for faster iteration
+while testing, or 100-250 for a final higher-detail render.
 """
 import os
 
@@ -28,11 +38,12 @@ import gradio as gr
 from config import TryOnConfig
 from tryon_pipeline import TryOnPipeline
 
-CHECKPOINT_PATH = os.environ.get("TRYON_CHECKPOINT", "./model/checkpoint.11900/checkpoint.11900.pt")
+CHECKPOINT_PATH = os.environ.get("TRYON_CHECKPOINT", "./checkpoints_base")
 BASE_SIZE = tuple(int(x) for x in os.environ.get("TRYON_BASE_SIZE", "256,256").split(","))
 SR_SIZE = tuple(int(x) for x in os.environ.get("TRYON_SR_SIZE", "512,512").split(","))
 USE_SR_UNET = os.environ.get("TRYON_USE_SR_UNET", "0") == "1"
 SHARE = os.environ.get("TRYON_SHARE", "0") == "1"
+INFERENCE_STEPS = int(os.environ.get("TRYON_INFERENCE_STEPS", "50"))
 
 PIPELINE = None
 
@@ -44,6 +55,7 @@ def load_pipeline():
             unet_number=2 if USE_SR_UNET else 1,
             base_image_size=BASE_SIZE,
             sr_image_size=SR_SIZE,
+            inference_timesteps=INFERENCE_STEPS,
         )
         PIPELINE = TryOnPipeline(checkpoint_path=CHECKPOINT_PATH, config=config)
     return PIPELINE

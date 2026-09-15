@@ -51,6 +51,18 @@ class TryOnConfig:
     timesteps: Tuple[int, int] = (1000, 1000)
     cond_scale: float = 3.0
 
+    # Sampling-step count used at INFERENCE only, independent of training.
+    # This model uses a continuous-time diffusion formulation (see
+    # GaussianDiffusionContinuousTimes in tryondiffusion/modules/imagen.py):
+    # training samples a continuous random t ~ Uniform(0,1), so `timesteps`
+    # above never affects what the model learns - it only controls how many
+    # discrete denoising steps the *sampling loop* takes. A checkpoint
+    # trained with timesteps=1000 can be sampled with far fewer steps for a
+    # large speedup, at some cost to fine detail. 50 is a reasonable
+    # quality/speed default; push lower (e.g. 20-30) for faster iteration,
+    # higher (e.g. 100-250) for a final higher-quality render.
+    inference_timesteps: int = 50
+
     ema: bool = True
     max_grad_norm: float = 1.0
     num_workers: int = 16

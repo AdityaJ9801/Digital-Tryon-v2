@@ -12,6 +12,7 @@ CLI usage:
         --output ./out.png
 """
 import argparse
+import glob
 import os
 
 import torch
@@ -23,6 +24,35 @@ from tryondiffusion import TryOnImagen, TryOnImagenTrainer, get_unet_by_name
 from tryondiffusion.preprocessing import default_garment_keypoints, estimate_person_pose, generate_agnostic_image
 
 
+def find_latest_checkpoint(path: str) -> str:
+    """
+    Resolves `path` to a checkpoint file. If `path` is already a .pt file,
+    returns it as-is. If it's a directory, finds the highest-step
+    checkpoint.<N>.pt inside it (same naming/sorting TryOnImagenTrainer's
+    own checkpointing uses), so callers can just point at a checkpoint
+    directory and always get the newest one without tracking step numbers.
+    """
+    if os.path.isfile(path):
+        return path
+
+    if not os.path.isdir(path):
+        raise FileNotFoundError(f"Checkpoint path not found: {path}")
+
+    candidates = glob.glob(os.path.join(path, "checkpoint.*.pt"))
+    if not candidates:
+        raise FileNotFoundError(f"No checkpoint.<N>.pt files found in directory: {path}")
+
+    def step_of(p):
+        try:
+            return int(os.path.basename(p).split(".")[-2])
+        except (IndexError, ValueError):
+            return -1
+
+    latest = max(candidates, key=step_of)
+    print(f"Auto-selected newest checkpoint: {latest} (of {len(candidates)} found in {path})")
+    return latest
+
+
 class TryOnPipeline:
     """Loads a trained TryOnDiffusion checkpoint once and runs repeated inference."""
 
@@ -30,12 +60,16 @@ class TryOnPipeline:
         self.config = config or TryOnConfig()
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
 
+        checkpoint_path = find_latest_checkpoint(checkpoint_path)
+
         base_unet = get_unet_by_name(
             "base", image_size=self.config.base_image_size, max_keypoints_len=self.config.max_keypoints
         )
         unets = (base_unet,)
         image_sizes = (self.config.base_image_size,)
-        timesteps = self.config.timesteps[0]
+        # Inference-only sampling-step count, independent of training - see
+        # TryOnConfig.inference_timesteps for why this is safe to differ.
+        timesteps = self.config.inference_timesteps
 
         if self.config.use_sr_unet:
             sr_unet = get_unet_by_name(
@@ -43,7 +77,7 @@ class TryOnPipeline:
             )
             unets = (base_unet, sr_unet)
             image_sizes = (self.config.base_image_size, self.config.sr_image_size)
-            timesteps = self.config.timesteps
+            timesteps = (self.config.inference_timesteps, self.config.inference_timesteps)
 
         imagen = TryOnImagen(
             unets=unets,
@@ -56,7 +90,10 @@ class TryOnPipeline:
         )
 
         print("Loading trainer / checkpoint...")
-        self.trainer = TryOnImagenTrainer(imagen=imagen, use_ema=True)
+        # bf16 autocast during sampling is a free speedup on GPU (Ampere+
+        # tensor cores) with negligible quality impact; irrelevant on CPU.
+        precision = "bf16" if self.device.type == "cuda" else None
+        self.trainer = TryOnImagenTrainer(imagen=imagen, use_ema=True, precision=precision)
         self.trainer.to(self.device)
 
         if not os.path.exists(checkpoint_path):
@@ -129,7 +166,18 @@ class TryOnPipeline:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--checkpoint", required=True, help="Path to a trainer checkpoint .pt file")
+    parser.add_argument(
+        "--checkpoint", required=True,
+        help="Path to a trainer checkpoint .pt file, OR a checkpoint directory - if a directory, "
+             "the highest-step checkpoint.<N>.pt inside it is used automatically."
+    )
+    parser.add_argument(
+        "--inference-steps", type=int, default=50,
+        help="Denoising sampling steps at inference - independent of the training timesteps "
+             "(this model uses continuous-time diffusion; see TryOnConfig.inference_timesteps). "
+             "Lower = faster, less detail (try 20-30 for quick iteration); higher = slower, more "
+             "detail (try 100-250 for a final render)."
+    )
     parser.add_argument("--person", required=True, help="Path to the person image")
     parser.add_argument("--garment", required=True, help="Path to the garment image")
     parser.add_argument("--output", default="./output.png", help="Where to save the generated image")
@@ -152,6 +200,7 @@ def main():
         base_image_size=tuple(args.base_image_size),
         sr_image_size=tuple(args.sr_image_size),
         max_keypoints=args.max_keypoints,
+        inference_timesteps=args.inference_steps,
     )
     pipeline = TryOnPipeline(checkpoint_path=args.checkpoint, config=config)
     pipeline.generate(args.person, args.garment, cond_scale=args.cond_scale, output_path=args.output)
