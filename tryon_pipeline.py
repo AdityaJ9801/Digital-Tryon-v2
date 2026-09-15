@@ -135,9 +135,24 @@ def main():
     parser.add_argument("--output", default="./output.png", help="Where to save the generated image")
     parser.add_argument("--cond-scale", type=float, default=3.0, help="Classifier-free-guidance scale")
     parser.add_argument("--use-sr-unet", action="store_true", help="Run the two-stage base+SR cascade")
+    parser.add_argument(
+        "--base-image-size", type=int, nargs=2, default=[256, 256],
+        help="MUST match the --base-image-size the checkpoint was trained with, or loading will silently "
+             "partial-load (mismatched-shape layers get skipped) and generation will look broken/random."
+    )
+    parser.add_argument(
+        "--sr-image-size", type=int, nargs=2, default=[512, 512],
+        help="MUST match the --sr-image-size the checkpoint was trained with (only used with --use-sr-unet)."
+    )
+    parser.add_argument("--max-keypoints", type=int, default=25, help="Must match the training --max-keypoints")
     args = parser.parse_args()
 
-    config = TryOnConfig(unet_number=2 if args.use_sr_unet else 1)
+    config = TryOnConfig(
+        unet_number=2 if args.use_sr_unet else 1,
+        base_image_size=tuple(args.base_image_size),
+        sr_image_size=tuple(args.sr_image_size),
+        max_keypoints=args.max_keypoints,
+    )
     pipeline = TryOnPipeline(checkpoint_path=args.checkpoint, config=config)
     pipeline.generate(args.person, args.garment, cond_scale=args.cond_scale, output_path=args.output)
     print(f"Saved: {args.output}")

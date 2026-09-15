@@ -6,6 +6,14 @@ Requires a trained checkpoint at CHECKPOINT_PATH (see README.md ->
 "Running the demo UI"). Only a person photo and a garment photo are needed
 from the user — the clothing-agnostic image and pose keypoints are derived
 automatically by TryOnPipeline (tryon_pipeline.py).
+
+The resolution env vars below MUST match whatever --base-image-size /
+--sr-image-size the checkpoint was actually trained with, or the checkpoint
+will silently partial-load (mismatched-shape layers get skipped) and
+generation will look broken. Example, for a checkpoint trained with
+`trainer.py --base-image-size 128 128`:
+    TRYON_CHECKPOINT=./checkpoints_base/checkpoint.6200.pt \
+    TRYON_BASE_SIZE=128,128 python app.py
 """
 import os
 
@@ -15,6 +23,9 @@ from config import TryOnConfig
 from tryon_pipeline import TryOnPipeline
 
 CHECKPOINT_PATH = os.environ.get("TRYON_CHECKPOINT", "./model/checkpoint.11900/checkpoint.11900.pt")
+BASE_SIZE = tuple(int(x) for x in os.environ.get("TRYON_BASE_SIZE", "256,256").split(","))
+SR_SIZE = tuple(int(x) for x in os.environ.get("TRYON_SR_SIZE", "512,512").split(","))
+USE_SR_UNET = os.environ.get("TRYON_USE_SR_UNET", "0") == "1"
 
 PIPELINE = None
 
@@ -22,7 +33,12 @@ PIPELINE = None
 def load_pipeline():
     global PIPELINE
     if PIPELINE is None:
-        PIPELINE = TryOnPipeline(checkpoint_path=CHECKPOINT_PATH, config=TryOnConfig())
+        config = TryOnConfig(
+            unet_number=2 if USE_SR_UNET else 1,
+            base_image_size=BASE_SIZE,
+            sr_image_size=SR_SIZE,
+        )
+        PIPELINE = TryOnPipeline(checkpoint_path=CHECKPOINT_PATH, config=config)
     return PIPELINE
 
 
