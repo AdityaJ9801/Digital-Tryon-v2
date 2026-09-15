@@ -52,6 +52,17 @@ The codebase was reworked for higher-resolution, production-style training:
 pip install -r requirements.txt
 ```
 
+On a headless/minimal server or container (common for cloud GPU boxes), also
+install MediaPipe's native GL dependencies — needed for the on-the-fly pose
+estimation in `tryondiffusion/preprocessing.py`, even for CPU-only pose
+inference:
+```bash
+sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libgbm1
+```
+Without these you'll hit `OSError: libEGL.so.1: cannot open shared object file`
+the first time pose estimation actually runs (training or inference on data
+that doesn't already have precomputed pose annotations).
+
 ### Data: Hugging Face Hub (default) or local folder
 
 By default every script pulls from

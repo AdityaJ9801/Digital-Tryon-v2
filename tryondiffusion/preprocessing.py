@@ -75,7 +75,17 @@ def get_pose_estimator():
             running_mode=RunningMode.IMAGE,
             num_poses=1,
         )
-        _POSE_ESTIMATOR = PoseLandmarker.create_from_options(options)
+        try:
+            _POSE_ESTIMATOR = PoseLandmarker.create_from_options(options)
+        except OSError as e:
+            if "libEGL" in str(e) or "libGL" in str(e):
+                raise OSError(
+                    "MediaPipe's native library needs libEGL/libGL, which is missing on this "
+                    "(likely headless/minimal-container) machine. Install it with:\n"
+                    "    sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libgbm1\n"
+                    "then retry."
+                ) from e
+            raise
     return _POSE_ESTIMATOR
 
 
