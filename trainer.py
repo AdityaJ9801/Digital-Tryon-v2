@@ -246,7 +246,21 @@ def main():
     print("Starting training loop...")
     step = trainer.num_steps_taken(unet_number=config.unet_number)
     while step < total_steps:
-        loss = trainer.train_step(unet_number=config.unet_number)
+        try:
+            loss = trainer.train_step(unet_number=config.unet_number)
+        except RuntimeError as e:
+            if "NVML_SUCCESS" in str(e) or "out of memory" in str(e).lower():
+                raise RuntimeError(
+                    f"Training step {step} failed, most likely due to GPU memory pressure "
+                    f"(current --batch-size {config.batch_size}, --gradient-accumulation-steps "
+                    f"{config.gradient_accumulation_steps}, image_size {config.image_size}). "
+                    "On some containerized/MIG/vGPU setups PyTorch's out-of-memory error message "
+                    "itself fails to build (a broken NVML query), which surfaces as a cryptic "
+                    "'NVML_SUCCESS == r INTERNAL ASSERT FAILED' instead of a clean CUDA OOM error - "
+                    "but the underlying cause is the same. Try re-running with a smaller --batch-size "
+                    "(raising --gradient-accumulation-steps to compensate) and/or --no-compile-model."
+                ) from e
+            raise
         step += 1
 
         if step % config.log_every == 0:
