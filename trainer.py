@@ -57,6 +57,24 @@ def configure_hardware(config: TryOnConfig):
         torch.backends.cudnn.allow_tf32 = True
         torch.set_float32_matmul_precision("high")
 
+    if config.compile_model and torch.cuda.is_available():
+        # torch.compile's "max-autotune" (and sometimes "default") mode
+        # enables CUDA Graphs capture (inductor's cudagraph_trees backend),
+        # which periodically queries the GPU via NVML. In some containerized
+        # / virtualized GPU setups that NVML call fails outright with
+        # "NVML_SUCCESS == r INTERNAL ASSERT FAILED" deep inside
+        # CUDACachingAllocator - a container/driver NVML-access issue, not a
+        # problem with the model or your data. Disabling just the CUDA-graphs
+        # capture path (not torch.compile itself) sidesteps that failure
+        # while still keeping triton kernel fusion / autotuning.
+        try:
+            import torch._inductor.config as inductor_config
+
+            inductor_config.triton.cudagraphs = False
+        except Exception as e:
+            print(f"Warning: could not disable inductor cudagraphs ({e}); "
+                  f"if training crashes with an NVML assertion, pass --no-compile-model")
+
 
 def build_dataset(config: TryOnConfig):
     image_size = config.image_size

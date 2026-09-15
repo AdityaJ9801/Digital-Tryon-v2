@@ -73,7 +73,10 @@ class TryOnConfig:
     mixed_precision: str = "bf16"  # "bf16" (recommended on B200/H100), "fp16", or "no"
     allow_tf32: bool = True
     compile_model: bool = True
-    compile_mode: str = "max-autotune"
+    compile_mode: str = "default"  # "max-autotune" is faster once warmed up but far more
+                                    # prone to CUDA-graphs/NVML issues on some cloud GPU
+                                    # containers; trainer.py also explicitly disables inductor's
+                                    # cudagraphs capture regardless of mode (see configure_hardware)
     seed: int = 42
 
     def __post_init__(self):
