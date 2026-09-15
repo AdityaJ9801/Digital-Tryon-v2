@@ -63,29 +63,55 @@ def _ensure_pose_landmarker_model() -> str:
 
 
 def get_pose_estimator():
-    """Lazily constructs a MediaPipe PoseLandmarker (Tasks API). Loaded once per process."""
-    global _POSE_ESTIMATOR
-    if _POSE_ESTIMATOR is None:
-        import mediapipe as mp
-        from mediapipe.tasks.python import BaseOptions
-        from mediapipe.tasks.python.vision import PoseLandmarker, PoseLandmarkerOptions, RunningMode
+    """
+    Lazily constructs a MediaPipe pose estimator, preferring whichever API the
+    installed `mediapipe` version supports. Returns `("solutions", estimator)`
+    or `("tasks", estimator)` so `estimate_person_pose` knows how to call it.
 
-        options = PoseLandmarkerOptions(
-            base_options=BaseOptions(model_asset_path=_ensure_pose_landmarker_model()),
-            running_mode=RunningMode.IMAGE,
-            num_poses=1,
-        )
-        try:
-            _POSE_ESTIMATOR = PoseLandmarker.create_from_options(options)
-        except OSError as e:
-            if "libEGL" in str(e) or "libGL" in str(e):
-                raise OSError(
-                    "MediaPipe's native library needs libEGL/libGL, which is missing on this "
-                    "(likely headless/minimal-container) machine. Install it with:\n"
-                    "    sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libgbm1\n"
-                    "then retry."
-                ) from e
-            raise
+    mediapipe<1.0's legacy `solutions.pose.Pose` runs a CPU-only graph with no
+    OpenGL/EGL dependency - the right choice on headless/minimal/no-root
+    servers. mediapipe>=1.0 dropped `solutions` in favor of the Tasks API
+    (`PoseLandmarker`), whose native library unconditionally links against
+    libEGL/libGL even for CPU inference; that requires installing those
+    system libraries (root/apt access), so it's only used as a fallback.
+    """
+    global _POSE_ESTIMATOR
+    if _POSE_ESTIMATOR is not None:
+        return _POSE_ESTIMATOR
+
+    import mediapipe as mp
+
+    if hasattr(mp, "solutions"):
+        estimator = mp.solutions.pose.Pose(static_image_mode=True, model_complexity=1)
+        _POSE_ESTIMATOR = ("solutions", estimator)
+        return _POSE_ESTIMATOR
+
+    from mediapipe.tasks.python import BaseOptions
+    from mediapipe.tasks.python.vision import PoseLandmarker, PoseLandmarkerOptions, RunningMode
+
+    options = PoseLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=_ensure_pose_landmarker_model()),
+        running_mode=RunningMode.IMAGE,
+        num_poses=1,
+    )
+    try:
+        estimator = PoseLandmarker.create_from_options(options)
+    except OSError as e:
+        if "libEGL" in str(e) or "libGL" in str(e):
+            raise OSError(
+                "MediaPipe's Tasks API needs libEGL/libGL, which is missing on this "
+                "(likely headless/minimal-container) machine.\n"
+                "If you have root/sudo:\n"
+                "    sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libgbm1\n"
+                "If you don't have root, pin mediapipe to the last version with the older "
+                "'solutions' API instead (pip-only, no root needed, no EGL/GL dependency) - see "
+                "requirements.txt and README -> Setup for the exact two-command sequence "
+                "(a plain `pip install mediapipe==0.10.14` alone breaks wandb via a protobuf "
+                "conflict, so a specific follow-up command is required too):\n"
+                "    pip install mediapipe==0.10.14 && pip install -U 'protobuf>=5,<6'"
+            ) from e
+        raise
+    _POSE_ESTIMATOR = ("tasks", estimator)
     return _POSE_ESTIMATOR
 
 
@@ -105,19 +131,24 @@ def estimate_person_pose(person_image: Image.Image, max_keypoints: int = 25) -> 
     zero-padded/truncated to `max_keypoints`. Used whenever a dataset (or a
     user, at inference time) does not already provide pose annotations.
     """
-    import mediapipe as mp
-
-    pose_landmarker = get_pose_estimator()
+    kind, estimator = get_pose_estimator()
     arr = np.array(person_image.convert("RGB"))
     h, w = arr.shape[:2]
 
-    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=arr)
-    result = pose_landmarker.detect(mp_image)
-
     keypoints = []
-    if result.pose_landmarks:
-        for lm in result.pose_landmarks[0]:
-            keypoints.append([lm.x * w, lm.y * h])
+    if kind == "solutions":
+        result = estimator.process(arr)
+        if result.pose_landmarks:
+            for lm in result.pose_landmarks.landmark:
+                keypoints.append([lm.x * w, lm.y * h])
+    else:
+        import mediapipe as mp
+
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=arr)
+        result = estimator.detect(mp_image)
+        if result.pose_landmarks:
+            for lm in result.pose_landmarks[0]:
+                keypoints.append([lm.x * w, lm.y * h])
 
     return _pad_or_truncate(keypoints, max_keypoints)
 

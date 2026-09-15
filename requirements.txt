@@ -18,13 +18,31 @@ pillow
 numpy
 
 # Auto-derivation of pose + clothing-agnostic image (tryondiffusion/preprocessing.py)
-mediapipe>=0.10.14      # PoseLandmarker (Tasks API) for on-the-fly pose estimation
+# Pinned to 0.10.14, the last version with the legacy `solutions.pose` API.
+# mediapipe>=1.0 (and some 0.10.x releases after 0.10.14) dropped `solutions`
+# in favor of the Tasks API, whose native library unconditionally links
+# against libEGL/libGL even for CPU-only inference - a hard native-dependency
+# requiring root/apt access, which headless GPU servers/containers commonly
+# don't have. `solutions.pose` runs a pure CPU graph with no such dependency.
+# tryondiffusion/preprocessing.py auto-detects and uses whichever API the
+# installed mediapipe version exposes, so a newer version still works fine
+# on a machine that does have libEGL/libGL available.
+mediapipe==0.10.14
 transformers>=4.44      # optional: higher-quality agnostic-image segmentation path
 
 # Training / logging
 tqdm
 tensorboard
 wandb
+# NOTE: mediapipe==0.10.14 declares protobuf<5, but wandb requires protobuf>=5
+# - genuinely conflicting constraints (`pip install mediapipe==0.10.14
+# protobuf>=5` in one command hard-fails: ResolutionImpossible), so protobuf
+# is deliberately NOT pinned here; `pip install -r requirements.txt` alone
+# lands on protobuf 4.x (satisfying mediapipe) which breaks wandb's import.
+# In practice mediapipe's solutions API works fine with protobuf 5.x at
+# runtime too (verified) - its <5 pin is overly conservative packaging
+# metadata - so fix this with a separate follow-up command after installing
+# this file. See README -> Setup for the exact two-step sequence.
 ftfy
 sentencepiece
 scipy

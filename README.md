@@ -50,18 +50,31 @@ The codebase was reworked for higher-resolution, production-style training:
 
 ```bash
 pip install -r requirements.txt
+pip install -U "protobuf>=5,<6"   # see note below - must be a separate command
 ```
 
-On a headless/minimal server or container (common for cloud GPU boxes), also
-install MediaPipe's native GL dependencies — needed for the on-the-fly pose
-estimation in `tryondiffusion/preprocessing.py`, even for CPU-only pose
-inference:
-```bash
-sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libgbm1
-```
-Without these you'll hit `OSError: libEGL.so.1: cannot open shared object file`
-the first time pose estimation actually runs (training or inference on data
-that doesn't already have precomputed pose annotations).
+The second command matters, and has to run **after** (not combined with) the
+first: `mediapipe==0.10.14` (pinned for its `solutions.pose` API — see
+`requirements.txt` for why) declares `protobuf<5`, which conflicts with
+`wandb`'s `protobuf>=5` requirement. `pip install mediapipe==0.10.14
+"protobuf>=5"` in one command hard-fails (`ResolutionImpossible`); `pip
+install -r requirements.txt` alone silently lands on `protobuf<5`, which then
+breaks `wandb`'s import. In practice `mediapipe`'s `solutions` API works fine
+with `protobuf>=5` at runtime (verified) — its `<5` pin is overly
+conservative packaging metadata — so the follow-up upgrade is the fix, and
+it's safe to run even though pip will print a mediapipe conflict warning.
+
+On a headless/minimal/no-root server or container (common for cloud GPU
+boxes), the above is also what avoids a separate, harder-to-fix problem:
+`mediapipe>=1.0` (and some 0.10.x releases newer than 0.10.14) replaced
+`solutions` with the Tasks API, whose native library unconditionally links
+against `libEGL`/`libGL` even for CPU-only inference — a system-level
+dependency (`apt-get install libegl1 libgl1 libgbm1`) that requires root and
+isn't installable via pip. `tryondiffusion/preprocessing.py` auto-detects
+and uses whichever pose API the installed `mediapipe` exposes, so if you *do*
+have root and prefer a newer `mediapipe`, installing the system libs and a
+newer `mediapipe` both work fine too — `mediapipe==0.10.14` is simply the
+version that needs nothing beyond `pip install`.
 
 ### Data: Hugging Face Hub (default) or local folder
 
