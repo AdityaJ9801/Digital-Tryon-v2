@@ -95,10 +95,43 @@ Recommendations for large B200 nodes:
 - Set `NCCL_P2P_LEVEL=NVL` (or leave unset to let NCCL auto-detect NVLink) for
   fast multi-GPU all-reduce on NVLink-connected nodes.
 - Use a CUDA 12.8+ build of PyTorch (Blackwell/`sm_100` support requires it).
-- `--compile` (`compile_model`, on by default) JIT-compiles each U-Net's
-  `forward` with `torch.compile(mode="max-autotune")` for extra throughput;
-  disable with `--no-compile-model` if you hit compilation issues while
-  iterating on architecture changes.
+- `torch.compile` (`compile_model`, on by default, mode `default`) JIT-compiles
+  each U-Net's `forward` for extra throughput; `trainer.py` also disables
+  inductor's CUDA-graphs capture by default (see known issue below) — disable
+  compilation entirely with `--no-compile-model` if you hit further issues
+  while iterating on architecture changes.
+
+#### Known issue: MIG-partitioned B200s and a cryptic `NVML_SUCCESS == r` crash
+
+If you're training on a **MIG slice** of a B200 (check with `nvidia-smi` —
+look for `MIG M. Enabled` and a `MIG devices` table) rather than a full GPU,
+you may hit this on the very first training step, regardless of batch size:
+
+```
+RuntimeError: NVML_SUCCESS == r INTERNAL ASSERT FAILED at
+".../CUDACachingAllocator.cpp":1165, please report a bug to PyTorch.
+```
+
+This is **not** a bug in this repo, and usually not a real out-of-memory
+condition either — it's a known PyTorch/NVML compatibility gap on MIG
+instances: PyTorch's CUDA caching allocator queries GPU memory info via
+NVML, and `nvmlDeviceGetMemoryInfo` doesn't behave the same way on a MIG
+device as on a full GPU across various driver/PyTorch version combinations,
+so the query itself fails instead of the allocator working (or reporting a
+clean OOM) normally.
+
+Workarounds, in order of how likely they are to help:
+1. Switch PyTorch off its default caching allocator for the affected NVML
+   code path:
+   ```bash
+   PYTORCH_NVML_BASED_CUDA_CHECK=0 PYTORCH_CUDA_ALLOC_CONF=backend:cudaMallocAsync \
+   python3 trainer.py --unet-number 1 ...
+   ```
+2. `--no-compile-model` (rules out any interaction with `torch.compile`'s
+   memory patterns as a contributing factor).
+3. If neither helps, this needs a full (non-MIG) GPU allocation — ask
+   whoever provisioned the instance for an un-partitioned B200. NVML works
+   normally on a full GPU; this class of issue is specific to MIG.
 
 ### Running each file
 
