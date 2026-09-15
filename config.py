@@ -63,6 +63,10 @@ class TryOnConfig:
 
     project_name: str = "tryondiffusion"
     use_wandb: bool = False
+    wandb_entity: Optional[str] = None  # your wandb username/team; omit to use the account default
+    wandb_run_name: Optional[str] = None  # omit to let wandb auto-generate one
+    log_every: int = 10  # steps between wandb/console scalar logs
+    wandb_sample_every: int = 0  # steps between logging generated sample images to wandb; 0 = disabled
 
     # ------------------------------------------------ hardware / precision
     # Defaults tuned for NVIDIA Hopper/Blackwell (incl. B200) data-center GPUs.

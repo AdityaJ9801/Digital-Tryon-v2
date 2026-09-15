@@ -174,6 +174,17 @@ def main():
     imagen = build_imagen(config)
 
     print("Instantiating trainer...")
+    wandb_kwargs = {}
+    if config.use_wandb:
+        # log_with="wandb" tells accelerate to actually spin up a wandb run;
+        # without it, project_name alone would try (and by default fail
+        # silently into a no-op) to initialize a tracker.
+        wandb_kwargs["accelerate_log_with"] = "wandb"
+        if config.wandb_entity:
+            wandb_kwargs["wandb_entity"] = config.wandb_entity
+        if config.wandb_run_name:
+            wandb_kwargs["wandb_name"] = config.wandb_run_name
+
     trainer = TryOnImagenTrainer(
         imagen=imagen,
         lr=config.learning_rate,
@@ -188,6 +199,7 @@ def main():
         only_train_unet_number=config.unet_number,
         project_name=config.project_name if config.use_wandb else None,
         verbose=True,
+        **wandb_kwargs,
     )
 
     trainer.add_train_dataloader(train_dataloader)
@@ -207,11 +219,22 @@ def main():
           f"effective_batch_size={config.batch_size * config.gradient_accumulation_steps}  "
           f"total_steps={total_steps}  mixed_precision={config.mixed_precision}")
 
+    if config.use_wandb:
+        print(f"Weights & Biases logging enabled  project={config.project_name}"
+              f"{'  entity=' + config.wandb_entity if config.wandb_entity else ''}"
+              f"{'  run=' + config.wandb_run_name if config.wandb_run_name else ''}")
+        print("Run `wandb login` first if you haven't already (or set the WANDB_API_KEY env var).")
+
     print("Starting training loop...")
     step = trainer.num_steps_taken(unet_number=config.unet_number)
     while step < total_steps:
         loss = trainer.train_step(unet_number=config.unet_number)
         step += 1
+
+        if step % config.log_every == 0:
+            trainer.log_metrics(
+                {"train/loss": float(loss.detach()), "train/lr": trainer.get_lr(config.unet_number)}, step=step
+            )
 
         if step % 50 == 0:
             print(f"step {step}/{total_steps}  loss={loss:.4f}")
@@ -219,9 +242,36 @@ def main():
         if validation_dataloader is not None and trainer.is_main and step % config.validate_every == 0:
             valid_loss = trainer.valid_step(unet_number=config.unet_number)
             print(f"step {step}  valid_loss={valid_loss:.4f}")
+            trainer.log_metrics({"valid/loss": float(valid_loss)}, step=step)
+
+            if config.use_wandb and config.wandb_sample_every and step % config.wandb_sample_every == 0:
+                log_sample_images(trainer, validation_dataloader, config, step)
 
     print("Training finished.")
     trainer.save_to_checkpoint_folder()
+
+
+def log_sample_images(trainer, validation_dataloader, config: TryOnConfig, step: int, num_samples: int = 4):
+    """Generates a few try-on images from the current (EMA) weights and logs
+    them to the active wandb run, so you can watch generation quality evolve
+    alongside the loss curves instead of only seeing numbers."""
+    import wandb
+
+    if not trainer.is_main:
+        return
+
+    batch = next(iter(validation_dataloader))
+    batch = {k: v[:num_samples] for k, v in batch.items()}
+    _ = batch.pop("person_images")
+
+    images = trainer.sample(
+        batch_size=batch["ca_images"].shape[0],
+        **batch,
+        cond_scale=config.cond_scale,
+        return_pil_images=True,
+        use_tqdm=False,
+    )
+    trainer.log_metrics({"samples": [wandb.Image(img, caption=f"step {step}") for img in images]}, step=step)
 
 
 if __name__ == "__main__":

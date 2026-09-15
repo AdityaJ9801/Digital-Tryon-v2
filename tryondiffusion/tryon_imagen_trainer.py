@@ -68,6 +68,15 @@ def split_args_and_kwargs(*args, split_size=None, **kwargs):
 # imagen trainer
 
 
+def _is_trackable(value):
+    """Whether `value` is safe to hand to a tracker (e.g. wandb) as run config."""
+    if isinstance(value, (int, float, str, bool, type(None))):
+        return True
+    if isinstance(value, (list, tuple)):
+        return all(_is_trackable(v) for v in value)
+    return False
+
+
 def restore_parts(state_dict_target, state_dict_from):
     for name, param in state_dict_from.items():
         if name not in state_dict_target:
@@ -137,6 +146,10 @@ class TryOnImagenTrainer(nn.Module):
 
         ema_kwargs, kwargs = groupby_prefix_and_trim("ema_", kwargs)
 
+        # tracker-specific init kwargs (e.g. wandb_entity=, wandb_name=, wandb_tags=
+        # get forwarded to wandb.init(...) when accelerate_log_with="wandb" is set)
+        wandb_kwargs, kwargs = groupby_prefix_and_trim("wandb_", kwargs)
+
         # create accelerator instance
         accelerate_kwargs, kwargs = groupby_prefix_and_trim("accelerate_", kwargs)
 
@@ -155,7 +168,12 @@ class TryOnImagenTrainer(nn.Module):
         )
         print(self.accelerator.state)
         if self.accelerator.is_local_main_process and exists(project_name):
-            self.accelerator.init_trackers(project_name, config=self.config)
+            # trackers (e.g. wandb) require a JSON-serializable config - self.config
+            # holds the raw constructor args, which includes live objects (the
+            # `imagen` module itself, etc), so only forward the loggable subset
+            trackable_config = {k: v for k, v in self.config.items() if _is_trackable(v)}
+            init_kwargs = {"wandb": wandb_kwargs} if wandb_kwargs else None
+            self.accelerator.init_trackers(project_name, config=trackable_config, init_kwargs=init_kwargs)
 
         TryOnImagenTrainer.locked = self.is_distributed
 
@@ -371,6 +389,14 @@ class TryOnImagenTrainer(nn.Module):
             return
 
         return self.accelerator.print(msg)
+
+    # tracker logging (wandb / tensorboard / etc, whatever accelerate_log_with points at)
+    # safe to call even when no tracker was configured (project_name=None) - becomes a no-op
+
+    def log_metrics(self, metrics: dict, step: int = None):
+        if not self.is_main:
+            return
+        self.accelerator.log(metrics, step=step)
 
     # validating the unet number
 
