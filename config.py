@@ -61,9 +61,9 @@ class TryOnConfig:
     init_checkpoint_path: Optional[str] = None  # e.g. trained base model, when training the SR unet
     validate_every: int = 500
 
-    project_name: str = "tryondiffusion"
+    project_name: str = "digital-tryon-v2"
     use_wandb: bool = False
-    wandb_entity: Optional[str] = None  # your wandb username/team; omit to use the account default
+    wandb_entity: Optional[str] = "aditya_1976-shri-ramdeobaba-college-of-engineering-and-m"
     wandb_run_name: Optional[str] = None  # omit to let wandb auto-generate one
     log_every: int = 10  # steps between wandb/console scalar logs
     wandb_sample_every: int = 0  # steps between logging generated sample images to wandb; 0 = disabled
