@@ -1,22 +1,33 @@
 """
 Builds tryon_mapping.csv for RealTryonDataset from local folders.
 
-Minimum required subfolders under root_dir: person_images/, garment_images/.
+Minimum required subfolders under root_dir: person_images/, garment_images/
+(or whatever names you pass to RealTryonDataset's person_folder=/
+garment_folder=, e.g. `image`/`cloth` for Kaggle VITON-HD-style dumps).
 Optional subfolders (used directly if present, auto-derived otherwise -
 see tryondiffusion/preprocessing.py): ca_images/, person_pose_path/.
 
-Every subfolder present under root_dir becomes a column; files are matched
-across folders by shared base filename (a "_keypoints" suffix, as produced
-by OpenPose, is stripped before matching).
+By default every subfolder present under root_dir becomes a column; pass
+include_folders=[...] to only map specific subfolders and ignore the rest
+(e.g. a dataset that also ships cloth-mask/, image-parse-v3/,
+openpose_img/, agnostic-v3.2/ etc. that this project doesn't need, since
+tryondiffusion/preprocessing.py derives the clothing-agnostic image and
+pose automatically instead of requiring them precomputed).
+
+Files are matched across folders by shared base filename (a "_keypoints"
+suffix, as produced by OpenPose, is stripped before matching).
 """
 import os
 import pandas as pd
 
-def generate_structured_csv(root_dir, output_csv='tryon_mapping.csv', use_full_path=False):
+def generate_structured_csv(root_dir, output_csv='tryon_mapping.csv', use_full_path=False, include_folders=None):
     folder_file_map = {}
     base_filenames = set()
 
     for folder_name in sorted(os.listdir(root_dir)):
+        if include_folders is not None and folder_name not in include_folders:
+            continue
+
         folder_path = os.path.join(root_dir, folder_name)
         if not os.path.isdir(folder_path):
             continue
@@ -53,11 +64,30 @@ def generate_structured_csv(root_dir, output_csv='tryon_mapping.csv', use_full_p
     df = pd.DataFrame(rows)
     csv_path = os.path.join(root_dir, output_csv)
     df.to_csv(csv_path, index=False)
-    print(f"✅ CSV saved to: {csv_path}")
+    print(f"CSV saved to: {csv_path}")
+    print(f"Columns: {list(df.columns)}")
+    print(f"Rows: {len(df)}")
 
 
-# Example usage: python csv_mapping.py
+# Example usage:
+#   python csv_mapping.py --root ./data
+#   python csv_mapping.py --root /path/to/train --include image cloth
 # (only needed for the local-folder data path; the Hugging Face data path
 # in trainer.py needs no CSV at all)
 if '__main__' == __name__:
-    generate_structured_csv(root_dir="./data", use_full_path= False)
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--root", default="./data", help="Dataset root directory containing the image subfolders")
+    parser.add_argument("--output", default="tryon_mapping.csv", help="Output CSV filename (written inside --root)")
+    parser.add_argument(
+        "--include", nargs="+", default=None,
+        help="Only map these subfolder names (e.g. --include image cloth), ignoring every other "
+             "subfolder under --root. Omit to include every subfolder found."
+    )
+    parser.add_argument("--full-path", action="store_true", help="Store absolute file paths instead of filenames")
+    args = parser.parse_args()
+
+    generate_structured_csv(
+        root_dir=args.root, output_csv=args.output, use_full_path=args.full_path, include_folders=args.include
+    )

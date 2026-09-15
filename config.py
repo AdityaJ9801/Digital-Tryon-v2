@@ -30,6 +30,13 @@ class TryOnConfig:
 
     local_root: str = "./data"
     local_mapping_file: str = "tryon_mapping.csv"
+    # Subfolder names for the local data path - override these to match a
+    # dataset that uses different naming (e.g. Kaggle VITON-HD-style dumps
+    # use `image`/`cloth` instead of `person_images`/`garment_images`).
+    local_person_folder: str = "person_images"
+    local_garment_folder: str = "garment_images"
+    local_ca_folder: str = "ca_images"
+    local_pose_folder: str = "person_pose_path"
 
     # ------------------------------------------------------------ resolution
     # Base U-Net produces the low-resolution "structure" image; the SR U-Net

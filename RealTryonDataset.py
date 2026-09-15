@@ -8,13 +8,17 @@ more accurate); otherwise both are derived automatically from the person
 image, exactly like `tryondiffusion.hf_dataset.HFTryOnDataset` does for
 Hugging Face Hub datasets.
 
-Expected layout under `root`:
+Expected layout under `root` (folder names are configurable via
+person_folder=/garment_folder=/ca_folder=/pose_folder=, so this also works
+directly against datasets that use different naming, e.g. Kaggle
+VITON-HD-style dumps with `image`/`cloth` folders instead of
+`person_images`/`garment_images` - no need to rename/copy files):
     root/
-      tryon_mapping.csv        # columns: person_images, garment_images[, ca_images, person_pose_path]
-      person_images/<file>
-      garment_images/<file>
-      ca_images/<file>              (optional)
-      person_pose_path/<file>.json  (optional, OpenPose format)
+      tryon_mapping.csv        # columns match the folder names below
+      <person_folder>/<file>          (default: person_images)
+      <garment_folder>/<file>         (default: garment_images)
+      <ca_folder>/<file>              (default: ca_images, optional)
+      <pose_folder>/<file>.json       (default: person_pose_path, optional, OpenPose format)
 
 Use csv_mapping.py to auto-generate tryon_mapping.csv from folder contents.
 """
@@ -35,10 +39,24 @@ from tryondiffusion.preprocessing import (
 
 
 class RealTryonDataset(torch.utils.data.Dataset):
-    def __init__(self, root, image_size=(256, 256), mapping_file="tryon_mapping.csv", max_keypoints=25):
+    def __init__(
+        self,
+        root,
+        image_size=(256, 256),
+        mapping_file="tryon_mapping.csv",
+        max_keypoints=25,
+        person_folder="person_images",
+        garment_folder="garment_images",
+        ca_folder="ca_images",
+        pose_folder="person_pose_path",
+    ):
         self.root = root
         self.image_size = image_size
         self.max_keypoints = max_keypoints
+        self.person_folder = person_folder
+        self.garment_folder = garment_folder
+        self.ca_folder = ca_folder
+        self.pose_folder = pose_folder
         self.mapping_file_path = os.path.join(root, mapping_file)
 
         if not os.path.exists(self.mapping_file_path):
@@ -46,13 +64,17 @@ class RealTryonDataset(torch.utils.data.Dataset):
 
         self.data_map = pd.read_csv(self.mapping_file_path)
 
-        required_cols = ["person_images", "garment_images"]
+        required_cols = [person_folder, garment_folder]
         missing = [c for c in required_cols if c not in self.data_map.columns]
         if missing:
-            raise ValueError(f"Mapping file must contain columns: {required_cols} (missing {missing})")
+            raise ValueError(
+                f"Mapping file must contain columns: {required_cols} (missing {missing}). "
+                f"Available columns: {list(self.data_map.columns)}. If your dataset uses different "
+                f"folder names, pass person_folder=/garment_folder= to match them."
+            )
 
-        self.has_ca = "ca_images" in self.data_map.columns
-        self.has_pose = "person_pose_path" in self.data_map.columns
+        self.has_ca = ca_folder in self.data_map.columns
+        self.has_pose = pose_folder in self.data_map.columns
 
         self.transforms = T.Compose(
             [
@@ -69,8 +91,8 @@ class RealTryonDataset(torch.utils.data.Dataset):
         try:
             row = self.data_map.iloc[idx]
 
-            person_path = os.path.join(self.root, "person_images", row["person_images"])
-            garment_path = os.path.join(self.root, "garment_images", row["garment_images"])
+            person_path = os.path.join(self.root, self.person_folder, row[self.person_folder])
+            garment_path = os.path.join(self.root, self.garment_folder, row[self.garment_folder])
 
             if not os.path.exists(person_path):
                 raise FileNotFoundError(f"Image not found: {person_path}")
@@ -81,9 +103,9 @@ class RealTryonDataset(torch.utils.data.Dataset):
             garment_image = Image.open(garment_path).convert("RGB")
 
             # Pose: use precomputed OpenPose JSON if available, else estimate it.
-            pose_value = row.get("person_pose_path") if self.has_pose else None
+            pose_value = row.get(self.pose_folder) if self.has_pose else None
             if self.has_pose and isinstance(pose_value, str) and pose_value:
-                pose_path = os.path.join(self.root, "person_pose_path", pose_value)
+                pose_path = os.path.join(self.root, self.pose_folder, pose_value)
                 with open(pose_path, "r") as f:
                     person_pose = keypoints_from_openpose_json(json.load(f), self.max_keypoints)
                 keypoint_format = "openpose"
@@ -92,9 +114,9 @@ class RealTryonDataset(torch.utils.data.Dataset):
                 keypoint_format = "mediapipe"
 
             # Clothing-agnostic image: use precomputed if available, else derive it.
-            ca_value = row.get("ca_images") if self.has_ca else None
+            ca_value = row.get(self.ca_folder) if self.has_ca else None
             if self.has_ca and isinstance(ca_value, str) and ca_value:
-                ca_path = os.path.join(self.root, "ca_images", ca_value)
+                ca_path = os.path.join(self.root, self.ca_folder, ca_value)
                 ca_image = Image.open(ca_path).convert("RGB")
             else:
                 ca_image = generate_agnostic_image(person_image, person_pose, keypoint_format=keypoint_format)
@@ -119,8 +141,8 @@ class RealTryonDataset(torch.utils.data.Dataset):
 
     def __repr__(self):
         lines = [f"<RealTryonDataset | Root: {self.root} | Samples: {len(self)}>\n"]
-        lines.append(f"{'person':<24}{'garment'}")
+        lines.append(f"{self.person_folder:<24}{self.garment_folder}")
         for idx in range(min(5, len(self.data_map))):
             row = self.data_map.iloc[idx]
-            lines.append(f"{row['person_images']:<24}{row['garment_images']}")
+            lines.append(f"{row[self.person_folder]:<24}{row[self.garment_folder]}")
         return "\n".join(lines)

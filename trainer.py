@@ -101,6 +101,10 @@ def build_dataset(config: TryOnConfig):
             image_size=image_size,
             mapping_file=config.local_mapping_file,
             max_keypoints=config.max_keypoints,
+            person_folder=config.local_person_folder,
+            garment_folder=config.local_garment_folder,
+            ca_folder=config.local_ca_folder,
+            pose_folder=config.local_pose_folder,
         )
     else:
         raise ValueError(f"Unknown data_source: {config.data_source!r} (expected 'huggingface' or 'local')")
