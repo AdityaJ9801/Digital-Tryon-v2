@@ -14,6 +14,12 @@ generation will look broken. Example, for a checkpoint trained with
 `trainer.py --base-image-size 128 128`:
     TRYON_CHECKPOINT=./checkpoints_base/checkpoint.6200.pt \
     TRYON_BASE_SIZE=128,128 python app.py
+
+On a remote server (SSH, no local browser), set TRYON_SHARE=1 to get a
+public gradio.live URL you can open from any browser, instead of needing
+SSH port-forwarding:
+    TRYON_CHECKPOINT=./checkpoints_base/checkpoint.6200.pt \
+    TRYON_BASE_SIZE=128,128 TRYON_SHARE=1 python app.py
 """
 import os
 
@@ -26,6 +32,7 @@ CHECKPOINT_PATH = os.environ.get("TRYON_CHECKPOINT", "./model/checkpoint.11900/c
 BASE_SIZE = tuple(int(x) for x in os.environ.get("TRYON_BASE_SIZE", "256,256").split(","))
 SR_SIZE = tuple(int(x) for x in os.environ.get("TRYON_SR_SIZE", "512,512").split(","))
 USE_SR_UNET = os.environ.get("TRYON_USE_SR_UNET", "0") == "1"
+SHARE = os.environ.get("TRYON_SHARE", "0") == "1"
 
 PIPELINE = None
 
@@ -58,6 +65,13 @@ with gr.Blocks(title="TryOn Diffusion") as demo:
         person_image = gr.Image(label="Person Photo", type="filepath")
         garment_image = gr.Image(label="Garment Photo", type="filepath")
 
+    if os.path.exists("test_person.jpg") and os.path.exists("test_garment.jpg"):
+        gr.Examples(
+            examples=[["test_person.jpg", "test_garment.jpg"]],
+            inputs=[person_image, garment_image],
+            label="Example (click to load)",
+        )
+
     cond_scale = gr.Slider(minimum=1.0, maximum=10.0, value=3.0, step=0.1, label="CFG Scale")
 
     run_button = gr.Button("Generate Try-On")
@@ -67,4 +81,4 @@ with gr.Blocks(title="TryOn Diffusion") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(server_name="0.0.0.0", share=SHARE)
