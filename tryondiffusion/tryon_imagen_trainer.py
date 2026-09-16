@@ -641,7 +641,21 @@ class TryOnImagenTrainer(nn.Module):
         if only_model:
             return loaded_obj
 
-        self.steps.copy_(loaded_obj["steps"])
+        loaded_steps = loaded_obj["steps"]
+        if loaded_steps.numel() == self.steps.numel():
+            self.steps.copy_(loaded_steps)
+        else:
+            # e.g. loading a checkpoint saved while training only the base unet
+            # (steps tensor of length 1) into a trainer now set up for the full
+            # base+SR cascade (steps tensor of length 2): carry over whatever
+            # step counts we can positionally and leave any new unet's count at
+            # its already-initialized 0, rather than a hard shape-mismatch crash.
+            n = min(loaded_steps.numel(), self.steps.numel())
+            self.steps[:n].copy_(loaded_steps[:n])
+            self.print(
+                f"checkpoint's steps tensor has {loaded_steps.numel()} unet(s), this trainer has "
+                f"{self.steps.numel()} - copied the first {n} and left the rest at 0"
+            )
 
         for ind in range(0, self.num_unets):
             scaler_key = f"scaler{ind}"
