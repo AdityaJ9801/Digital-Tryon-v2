@@ -282,37 +282,94 @@ def generate_agnostic_image(
     return Image.composite(gray, agnostic, mask)
 
 
-def get_segmentation_pipeline(model_id: str = "mattmdjaga/segformer_b2_clothes"):
+def get_segmentation_pipeline(model_id: str = "mattmdjaga/segformer_b2_clothes", device=None):
     """Lazily loads a pretrained clothes-segmentation model from the HF Hub."""
     global _SEGMENTATION_PIPELINE
     if _SEGMENTATION_PIPELINE is None:
         from transformers import pipeline
 
-        _SEGMENTATION_PIPELINE = pipeline("image-segmentation", model=model_id)
+        pipeline_kwargs = {}
+        if device is not None:
+            # transformers' `device` kwarg wants an int GPU index (or -1 for
+            # CPU), not a torch.device - normalize either form.
+            pipeline_kwargs["device"] = device.index if isinstance(device, torch.device) and device.type == "cuda" else (
+                -1 if (isinstance(device, torch.device) and device.type == "cpu") else device
+            )
+        _SEGMENTATION_PIPELINE = pipeline("image-segmentation", model=model_id, **pipeline_kwargs)
     return _SEGMENTATION_PIPELINE
 
 
-# Labels from mattmdjaga/segformer_b2_clothes that correspond to worn garments.
-_GARMENT_LABELS = {"Upper-clothes", "Dress", "Skirt", "Pants", "Belt"}
+# Labels from mattmdjaga/segformer_b2_clothes corresponding to the WORN UPPER
+# GARMENT specifically - this repo's task is upper-body try-on only (matching
+# the "cloth" folder convention in VITON-HD/Zalando-style datasets), so
+# deliberately excludes Skirt/Pants/Belt/shoes/etc: those should stay visible
+# and unchanged in both the agnostic input and the generated output, not be
+# masked out and left for the model to hallucinate back in.
+_GARMENT_LABELS = {"Upper-clothes", "Dress"}
 
 
-def generate_agnostic_image_segmentation(person_image: Image.Image, model_id: Optional[str] = None) -> Image.Image:
+def generate_agnostic_image_segmentation(
+    person_image: Image.Image,
+    model_id: Optional[str] = None,
+    device=None,
+    fallback_keypoints: Optional[torch.Tensor] = None,
+    fallback_keypoint_format: str = "mediapipe",
+) -> Image.Image:
     """
     Higher-quality clothing-agnostic image using a pretrained human/clothes
-    parsing model from the Hugging Face Hub. Slower than
-    `generate_agnostic_image` (needs a forward pass through a segmentation
-    network) but produces a tighter, more realistic garment-removal mask —
-    recommended for production data pipelines when throughput allows it.
+    parsing model from the Hugging Face Hub - a real per-pixel garment mask,
+    not a geometric approximation. Slower than `generate_agnostic_image`
+    (needs a forward pass through a segmentation network per image) but
+    produces much tighter, more accurate garment removal.
+
+    If segmentation finds no upper-garment region at all (unusual image, or
+    a model hiccup), falls back to the geometric heuristic
+    (`generate_agnostic_image`) rather than silently returning the person
+    image completely unmasked - pass `fallback_keypoints` (and matching
+    `fallback_keypoint_format`) to enable this safety net.
     """
-    seg = get_segmentation_pipeline(model_id) if model_id else get_segmentation_pipeline()
+    seg = get_segmentation_pipeline(model_id, device=device) if model_id else get_segmentation_pipeline(device=device)
     person_image = person_image.convert("RGB")
     results = seg(person_image)
 
     mask = Image.new("L", person_image.size, 0)
+    found_garment = False
     for r in results:
         if r["label"] in _GARMENT_LABELS:
             mask = Image.composite(Image.new("L", person_image.size, 255), mask, r["mask"])
+            found_garment = True
 
+    if not found_garment:
+        if fallback_keypoints is not None:
+            return generate_agnostic_image(person_image, fallback_keypoints, keypoint_format=fallback_keypoint_format)
+        return person_image
+
+    # Dilate slightly before blurring, so small gaps right at the segmentation
+    # boundary (e.g. a sliver of collar the model didn't quite classify as
+    # garment) don't leave a thin strip of the original clothing visible.
+    dilate_size = max(3, int(min(person_image.size) * 0.01) | 1)  # MaxFilter needs an odd size
+    mask = mask.filter(ImageFilter.MaxFilter(dilate_size))
     mask = mask.filter(ImageFilter.GaussianBlur(radius=max(2, int(min(person_image.size) * 0.01))))
     gray = Image.new("RGB", person_image.size, (127, 127, 127))
     return Image.composite(gray, person_image, mask)
+
+
+def derive_agnostic_image(
+    person_image: Image.Image,
+    keypoints: torch.Tensor,
+    method: str = "segmentation",
+    keypoint_format: str = "mediapipe",
+    device=None,
+) -> Image.Image:
+    """
+    Single entry point used by RealTryonDataset, HFTryOnDataset, and
+    TryOnPipeline to auto-derive the clothing-agnostic image, so all three
+    switch between methods (TryOnConfig.agnostic_method) the same way.
+    """
+    if method == "segmentation":
+        return generate_agnostic_image_segmentation(
+            person_image, device=device, fallback_keypoints=keypoints, fallback_keypoint_format=keypoint_format
+        )
+    if method == "heuristic":
+        return generate_agnostic_image(person_image, keypoints, keypoint_format=keypoint_format)
+    raise ValueError(f"Unknown agnostic_method: {method!r} (expected 'segmentation' or 'heuristic')")

@@ -21,7 +21,7 @@ from torchvision.transforms import v2 as T
 
 from config import TryOnConfig
 from tryondiffusion import TryOnImagen, TryOnImagenTrainer, get_unet_by_name
-from tryondiffusion.preprocessing import default_garment_keypoints, estimate_person_pose, generate_agnostic_image
+from tryondiffusion.preprocessing import default_garment_keypoints, derive_agnostic_image, estimate_person_pose
 
 
 def find_latest_checkpoint(path: str) -> str:
@@ -175,7 +175,10 @@ class TryOnPipeline:
         garment_image = self._prep_image(garment_image)
 
         person_pose = estimate_person_pose(person_image, self.config.max_keypoints)
-        ca_image = generate_agnostic_image(person_image, person_pose, keypoint_format="mediapipe")
+        ca_image = derive_agnostic_image(
+            person_image, person_pose, method=self.config.agnostic_method,
+            keypoint_format="mediapipe", device=self.device,
+        )
         garment_pose = default_garment_keypoints(self.config.max_keypoints)
 
         ow, oh = person_image.size

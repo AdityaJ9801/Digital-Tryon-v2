@@ -38,6 +38,15 @@ class TryOnConfig:
     local_ca_folder: str = "ca_images"
     local_pose_folder: str = "person_pose_path"
 
+    # How to auto-derive the clothing-agnostic image whenever a dataset/user
+    # doesn't already provide a precomputed one (see tryondiffusion/preprocessing.py):
+    #   "segmentation" - a real pretrained clothes-segmentation model (accurate
+    #                     per-pixel garment mask, recommended default; needs
+    #                     `transformers` and downloads a model on first use)
+    #   "heuristic"     - cheap geometric shoulders/hips/arms approximation,
+    #                     no extra dependency, much less accurate
+    agnostic_method: str = "segmentation"
+
     # ------------------------------------------------------------ resolution
     # Base U-Net produces the low-resolution "structure" image; the SR U-Net
     # upscales + refines it. Both were bumped up from the original 128/256

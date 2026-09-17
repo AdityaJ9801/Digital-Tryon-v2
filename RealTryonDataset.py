@@ -32,8 +32,8 @@ from torchvision.transforms import v2 as T
 
 from tryondiffusion.preprocessing import (
     default_garment_keypoints,
+    derive_agnostic_image,
     estimate_person_pose,
-    generate_agnostic_image,
     keypoints_from_openpose_json,
 )
 
@@ -49,6 +49,7 @@ class RealTryonDataset(torch.utils.data.Dataset):
         garment_folder="garment_images",
         ca_folder="ca_images",
         pose_folder="person_pose_path",
+        agnostic_method="segmentation",
     ):
         self.root = root
         self.image_size = image_size
@@ -57,6 +58,7 @@ class RealTryonDataset(torch.utils.data.Dataset):
         self.garment_folder = garment_folder
         self.ca_folder = ca_folder
         self.pose_folder = pose_folder
+        self.agnostic_method = agnostic_method
         self.mapping_file_path = os.path.join(root, mapping_file)
 
         if not os.path.exists(self.mapping_file_path):
@@ -119,7 +121,9 @@ class RealTryonDataset(torch.utils.data.Dataset):
                 ca_path = os.path.join(self.root, self.ca_folder, ca_value)
                 ca_image = Image.open(ca_path).convert("RGB")
             else:
-                ca_image = generate_agnostic_image(person_image, person_pose, keypoint_format=keypoint_format)
+                ca_image = derive_agnostic_image(
+                    person_image, person_pose, method=self.agnostic_method, keypoint_format=keypoint_format
+                )
 
             garment_pose = default_garment_keypoints(self.max_keypoints)
 

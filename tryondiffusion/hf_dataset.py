@@ -23,8 +23,8 @@ from torchvision.transforms import v2 as T
 
 from tryondiffusion.preprocessing import (
     default_garment_keypoints,
+    derive_agnostic_image,
     estimate_person_pose,
-    generate_agnostic_image,
     keypoints_from_openpose_json,
 )
 
@@ -44,6 +44,7 @@ class _HFTryOnBase:
         agnostic_image_column: Optional[str],
         streaming: bool,
         hf_token: Optional[str],
+        agnostic_method: str = "segmentation",
     ):
         from datasets import load_dataset  # local import: keep `datasets` an optional dependency at import time
 
@@ -54,6 +55,7 @@ class _HFTryOnBase:
         self.pose_column = pose_column
         self.agnostic_image_column = agnostic_image_column
         self.streaming = streaming
+        self.agnostic_method = agnostic_method
 
         self.dataset = load_dataset(repo_id, split=split, streaming=streaming, token=hf_token)
 
@@ -111,7 +113,9 @@ class _HFTryOnBase:
         if raw_agnostic:
             ca_image = self._to_pil(raw_agnostic)
         else:
-            ca_image = generate_agnostic_image(person_image, person_pose, keypoint_format=keypoint_format)
+            ca_image = derive_agnostic_image(
+                person_image, person_pose, method=self.agnostic_method, keypoint_format=keypoint_format
+            )
 
         garment_pose = default_garment_keypoints(self.max_keypoints)
 
@@ -171,6 +175,7 @@ def build_hf_tryon_dataset(
     streaming: bool = False,
     shuffle_buffer_size: int = 1000,
     hf_token: Optional[str] = None,
+    agnostic_method: str = "segmentation",
 ):
     """Factory that returns a map-style or streaming HF dataset depending on `streaming`."""
     klass = HFTryOnIterableDataset if streaming else HFTryOnDataset
@@ -184,6 +189,7 @@ def build_hf_tryon_dataset(
         pose_column=pose_column,
         agnostic_image_column=agnostic_image_column,
         hf_token=hf_token,
+        agnostic_method=agnostic_method,
     )
     if streaming:
         ds.dataset = ds.dataset.shuffle(buffer_size=shuffle_buffer_size, seed=42)

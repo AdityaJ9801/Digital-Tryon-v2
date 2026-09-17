@@ -9,10 +9,14 @@ fsspec
 # Data
 datasets>=2.20         # Hugging Face Hub dataset streaming/loading (see tryondiffusion/hf_dataset.py)
 # NOTE: huggingface_hub>=1.0's httpx-based HTTP backend has a known client-lifecycle
-# bug that breaks fsspec range-reads used by `datasets` streaming (observed directly
-# while building this repo: "RuntimeError: Cannot send a request, as the client has
-# been closed."). Pin below 1.0 until that's resolved upstream.
-huggingface_hub<1.0
+# bug in `datasets`' STREAMING path specifically (--hf-streaming) - reproduced directly
+# while building this repo: "RuntimeError: Cannot send a request, as the client has been
+# closed." The default, non-streaming path (regular load_dataset(..., streaming=False),
+# what this project uses unless you pass --hf-streaming) works fine on modern
+# huggingface_hub - verified end-to-end - so no version pin is needed here. If you hit
+# that error, it means you're using --hf-streaming; downgrade to huggingface_hub<1.0
+# just for that run.
+huggingface_hub
 pandas
 pillow
 numpy
@@ -28,7 +32,13 @@ numpy
 # installed mediapipe version exposes, so a newer version still works fine
 # on a machine that does have libEGL/libGL available.
 mediapipe==0.10.14
-transformers>=4.44      # optional: higher-quality agnostic-image segmentation path
+# Required by default: TryOnConfig.agnostic_method defaults to "segmentation" -
+# a real pretrained clothes-segmentation model (mattmdjaga/segformer_b2_clothes,
+# downloaded automatically on first use), which produces a much more accurate
+# clothing-agnostic mask than the geometric fallback (`agnostic_method="heuristic"`,
+# no extra dependency beyond mediapipe, ~100x faster per image but noticeably
+# less accurate - see tryondiffusion/preprocessing.py).
+transformers>=4.44
 
 # Training / logging
 tqdm

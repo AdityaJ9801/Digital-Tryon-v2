@@ -94,6 +94,7 @@ def build_dataset(config: TryOnConfig):
             pose_column=config.hf_pose_column,
             agnostic_image_column=config.hf_agnostic_image_column,
             streaming=config.hf_streaming,
+            agnostic_method=config.agnostic_method,
         )
     elif config.data_source == "local":
         from RealTryonDataset import RealTryonDataset
@@ -107,6 +108,7 @@ def build_dataset(config: TryOnConfig):
             garment_folder=config.local_garment_folder,
             ca_folder=config.local_ca_folder,
             pose_folder=config.local_pose_folder,
+            agnostic_method=config.agnostic_method,
         )
     else:
         raise ValueError(f"Unknown data_source: {config.data_source!r} (expected 'huggingface' or 'local')")
