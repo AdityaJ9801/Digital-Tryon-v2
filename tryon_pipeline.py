@@ -53,6 +53,33 @@ def find_latest_checkpoint(path: str) -> str:
     return latest
 
 
+def find_globally_latest_checkpoint(root: str = ".", dir_pattern: str = "checkpoints*") -> str:
+    """
+    Scans every directory under `root` matching `dir_pattern` (by default,
+    every training lineage: checkpoints_base, checkpoints_kaggle_hf_zalando,
+    checkpoints_sr_stage1, etc.) for checkpoint.<N>.pt files, and returns
+    whichever single file was modified most recently.
+
+    Uses file modification time, not step number, because step counters are
+    independent per lineage (e.g. a base-only lineage's step 47400 and an
+    SR-stage lineage's step 3000 aren't comparable) - the most recently
+    *written* checkpoint, whichever folder it's in, is "the latest model".
+
+    Note: different lineages can differ in unet_number/resolution (e.g. a
+    base-only checkpoint vs. an SR-stage one). This function only picks the
+    freshest *file* - it does not know which config it needs, so the caller
+    should print which directory got picked (see app.py) so a mismatch is
+    obvious rather than silently loading with the wrong assumptions.
+    """
+    candidates = glob.glob(os.path.join(root, dir_pattern, "checkpoint.*.pt"))
+    if not candidates:
+        raise FileNotFoundError(f"No checkpoint.<N>.pt files found under {root}/{dir_pattern}/")
+
+    latest = max(candidates, key=os.path.getmtime)
+    print(f"Auto-selected globally newest checkpoint (by modification time): {latest}")
+    return latest
+
+
 class TryOnPipeline:
     """Loads a trained TryOnDiffusion checkpoint once and runs repeated inference."""
 
