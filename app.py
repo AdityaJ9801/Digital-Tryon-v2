@@ -91,7 +91,8 @@ def run_tryon(person_image, garment_image, cond_scale):
         raise gr.Error("Please provide both a person image and a garment image.")
 
     pipeline = load_pipeline()
-    return pipeline.generate(person_image, garment_image, cond_scale=cond_scale)
+    result, debug = pipeline.generate(person_image, garment_image, cond_scale=cond_scale, return_debug=True)
+    return result, debug["ca_image"]
 
 
 with gr.Blocks(title="TryOn Diffusion") as demo:
@@ -112,9 +113,22 @@ with gr.Blocks(title="TryOn Diffusion") as demo:
     cond_scale = gr.Slider(minimum=1.0, maximum=10.0, value=3.0, step=0.1, label="CFG Scale")
 
     run_button = gr.Button("Generate Try-On")
-    output_image = gr.Image(label="Generated Image")
 
-    run_button.click(fn=run_tryon, inputs=[person_image, garment_image, cond_scale], outputs=output_image)
+    with gr.Row():
+        output_image = gr.Image(label="Generated Image")
+        debug_ca_image = gr.Image(
+            label="Debug: auto-generated clothing-agnostic mask (what the model actually sees as 'person')",
+        )
+    gr.Markdown(
+        "If the generated garment looks wrong or the original clothing seems to still be there, check the "
+        "debug image above: the gray-masked region is all of the person's original clothing the model can "
+        "no longer see. If the mask isn't fully covering the worn garment, the model can still see the "
+        "original clothing and will tend to reproduce it instead of the new one."
+    )
+
+    run_button.click(
+        fn=run_tryon, inputs=[person_image, garment_image, cond_scale], outputs=[output_image, debug_ca_image]
+    )
 
 
 if __name__ == "__main__":

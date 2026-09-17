@@ -145,7 +145,14 @@ class TryOnPipeline:
         raise TypeError("image must be a file path or a PIL.Image")
 
     @torch.no_grad()
-    def generate(self, person_image, garment_image, cond_scale: float = None, output_path: str = None) -> Image.Image:
+    def generate(
+        self,
+        person_image,
+        garment_image,
+        cond_scale: float = None,
+        output_path: str = None,
+        return_debug: bool = False,
+    ):
         """
         Args:
             person_image: file path or PIL.Image of the person.
@@ -153,6 +160,14 @@ class TryOnPipeline:
             cond_scale: classifier-free-guidance scale (higher = stronger
                 garment/pose adherence, typical range 2.0-5.0).
             output_path: if given, saves the generated image there.
+            return_debug: if True, returns (result_image, debug_dict) instead
+                of just result_image. debug_dict["ca_image"] is the
+                auto-generated clothing-agnostic image actually fed to the
+                model - inspect this when generated garments look wrong or
+                the original clothing doesn't seem removed: if the mask
+                isn't fully covering the worn garment in this image, the
+                model can still see the original clothing and has every
+                reason to reproduce it instead of the new garment.
         """
         cond_scale = cond_scale if cond_scale is not None else self.config.cond_scale
 
@@ -183,11 +198,18 @@ class TryOnPipeline:
         )
 
         result = images[0]
+
+        if return_debug:
+            debug = {"ca_image": ca_image, "person_pose": person_pose}
+
         if output_path:
             out_dir = os.path.dirname(output_path)
             if out_dir:
                 os.makedirs(out_dir, exist_ok=True)
             result.save(output_path)
+
+        if return_debug:
+            return result, debug
         return result
 
 

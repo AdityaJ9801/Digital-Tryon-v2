@@ -46,6 +46,20 @@ _MEDIAPIPE_TORSO_IDX = {"r_shoulder": 12, "l_shoulder": 11, "l_hip": 23, "r_hip"
 # MediaPipe (the two formats index joints differently).
 _OPENPOSE_TORSO_IDX = {"r_shoulder": 2, "l_shoulder": 5, "l_hip": 12, "r_hip": 9}
 
+# Arm indices (shoulder/elbow/wrist) for masking sleeves - a torso-only mask
+# leaves long sleeves fully visible (confirmed visually: a mask covering only
+# the shoulder-to-hip box left both sleeves of a long-sleeve top untouched),
+# which gives the model every reason to reproduce the original garment
+# instead of the new one it's supposed to be conditioned on.
+_MEDIAPIPE_ARM_IDX = {
+    "l_shoulder": 11, "l_elbow": 13, "l_wrist": 15,
+    "r_shoulder": 12, "r_elbow": 14, "r_wrist": 16,
+}
+_OPENPOSE_ARM_IDX = {
+    "l_shoulder": 5, "l_elbow": 6, "l_wrist": 7,
+    "r_shoulder": 2, "r_elbow": 3, "r_wrist": 4,
+}
+
 
 def _ensure_pose_landmarker_model() -> str:
     """Downloads (once) and caches the MediaPipe PoseLandmarker model file."""
@@ -195,7 +209,34 @@ def _torso_polygon(w: int, h: int, keypoints: torch.Tensor, idx_map: dict, expan
     r_sh, l_sh, l_hip, r_hip = (pts[i] for i in required)
     cx = (r_sh[0] + l_sh[0] + l_hip[0] + r_hip[0]) / 4
     cy = (r_sh[1] + l_sh[1] + l_hip[1] + r_hip[1]) / 4
-    return [(cx + (x - cx) * expand, cy + (y - cy) * expand) for x, y in (r_sh, l_sh, l_hip, r_hip)]
+    polygon = [(cx + (x - cx) * expand, cy + (y - cy) * expand) for x, y in (r_sh, l_sh, l_hip, r_hip)]
+
+    # Nudge the top two corners (shoulders) further up, so a crew-neck/high
+    # collar sitting slightly above the shoulder line still gets covered.
+    shoulder_width = abs(l_sh[0] - r_sh[0])
+    neck_lift = shoulder_width * 0.15
+    polygon[0] = (polygon[0][0], polygon[0][1] - neck_lift)
+    polygon[1] = (polygon[1][0], polygon[1][1] - neck_lift)
+    return polygon
+
+
+def _arm_lines(keypoints: torch.Tensor, idx_map: dict):
+    """Returns a list of (point_a, point_b) segments tracing each visible arm
+    (shoulder->elbow, elbow->wrist), skipping any joint pose estimation
+    didn't find (reported as (0, 0))."""
+    pts = keypoints.numpy()
+
+    def valid(i):
+        return i < len(pts) and not (pts[i][0] == 0 and pts[i][1] == 0)
+
+    segments = []
+    for side in ("l", "r"):
+        joint_names = [f"{side}_shoulder", f"{side}_elbow", f"{side}_wrist"]
+        joint_idx = [idx_map.get(name) for name in joint_names]
+        joints = [pts[i] for i in joint_idx if i is not None and valid(i)]
+        for a, b in zip(joints, joints[1:]):
+            segments.append((tuple(a), tuple(b)))
+    return segments
 
 
 def generate_agnostic_image(
@@ -203,22 +244,38 @@ def generate_agnostic_image(
     keypoints: torch.Tensor,
     expand: float = 1.35,
     keypoint_format: str = "mediapipe",
+    arm_width_frac: float = 0.16,
 ) -> Image.Image:
     """
     Cheap, model-free clothing-agnostic image: blanks out the torso polygon
-    (shoulders -> hips) implied by the pose keypoints with neutral gray, so
-    the network never sees the original garment. This approximates the
-    paper's "agnostic RGB" input without requiring a human-parsing/
-    segmentation network in the data-loading hot path. For higher fidelity,
-    use `generate_agnostic_image_segmentation` instead.
+    (shoulders -> hips) AND both arms (shoulder->elbow->wrist, as thick
+    capsules) implied by the pose keypoints with neutral gray, so the network
+    never sees the original garment - including long sleeves, which a
+    torso-only mask leaves fully visible. This approximates the paper's
+    "agnostic RGB" input without requiring a human-parsing/segmentation
+    network in the data-loading hot path. For higher fidelity, use
+    `generate_agnostic_image_segmentation` instead.
     """
     w, h = person_image.size
-    idx_map = _MEDIAPIPE_TORSO_IDX if keypoint_format == "mediapipe" else _OPENPOSE_TORSO_IDX
-    polygon = _torso_polygon(w, h, keypoints, idx_map, expand)
+    idx_map_torso = _MEDIAPIPE_TORSO_IDX if keypoint_format == "mediapipe" else _OPENPOSE_TORSO_IDX
+    idx_map_arms = _MEDIAPIPE_ARM_IDX if keypoint_format == "mediapipe" else _OPENPOSE_ARM_IDX
+    polygon = _torso_polygon(w, h, keypoints, idx_map_torso, expand)
+    arm_segments = _arm_lines(keypoints, idx_map_arms)
 
     agnostic = person_image.convert("RGB").copy()
     mask = Image.new("L", agnostic.size, 0)
-    ImageDraw.Draw(mask).polygon(polygon, fill=255)
+    draw = ImageDraw.Draw(mask)
+    draw.polygon(polygon, fill=255)
+
+    arm_width = max(4, int(min(w, h) * arm_width_frac))
+    for a, b in arm_segments:
+        draw.line([a, b], fill=255, width=arm_width)
+        # round the joints so consecutive segments don't leave visible notches
+        for cx, cy in (a, b):
+            draw.ellipse(
+                [cx - arm_width / 2, cy - arm_width / 2, cx + arm_width / 2, cy + arm_width / 2], fill=255
+            )
+
     mask = mask.filter(ImageFilter.GaussianBlur(radius=max(2, int(min(w, h) * 0.01))))
 
     gray = Image.new("RGB", agnostic.size, (127, 127, 127))
