@@ -30,6 +30,8 @@ See `README.md` -> "Training on NVIDIA B200 / Blackwell" for multi-GPU
 launch and environment-variable recommendations.
 """
 import argparse
+import time
+from datetime import timedelta
 
 import torch
 from torch.utils.data import DataLoader
@@ -249,6 +251,8 @@ def main():
 
     print("Starting training loop...")
     step = trainer.num_steps_taken(unet_number=config.unet_number)
+    window_start_time = time.time()
+    window_start_step = step
     while step < total_steps:
         try:
             loss = trainer.train_step(unet_number=config.unet_number)
@@ -273,7 +277,19 @@ def main():
             )
 
         if step % 50 == 0:
-            print(f"step {step}/{total_steps}  loss={loss:.4f}")
+            elapsed = time.time() - window_start_time
+            steps_done = step - window_start_step
+            steps_per_sec = steps_done / elapsed if elapsed > 0 else 0.0
+            remaining_steps = total_steps - step
+            eta_seconds = remaining_steps / steps_per_sec if steps_per_sec > 0 else float("inf")
+            eta_str = str(timedelta(seconds=int(eta_seconds))) if eta_seconds != float("inf") else "unknown"
+
+            print(f"step {step}/{total_steps}  loss={loss:.4f}  "
+                  f"{steps_per_sec:.3f} steps/s  ETA {eta_str}")
+            trainer.log_metrics({"train/steps_per_sec": steps_per_sec}, step=step)
+
+            window_start_time = time.time()
+            window_start_step = step
 
         if validation_dataloader is not None and trainer.is_main and step % config.validate_every == 0:
             valid_loss = trainer.valid_step(unet_number=config.unet_number)
